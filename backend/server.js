@@ -6,25 +6,31 @@ const connectDB = require('./configdb.js'); // (موجود الآن)
 
 dotenv.config(); // تحميل متغيرات البيئة (من ملف .env)
 
+// --- !!! خطوة تشخيصية: طباعة المتغيرات للتأكد منها !!! ---
+console.log("=============== DEBUGGING VARIABLES ===============");
+console.log("MONGO_URI:", process.env.MONGO_URI);
+console.log("JWT_SECRET:", process.env.JWT_SECRET ? "Loaded" : "Not Loaded"); // نطبع فقط هل تم تحميله
+console.log("PORT:", process.env.PORT); // نطبع البورت أيضاً
+console.log("=================================================");
+// --- !!! نهاية الخطوة التشخيصية !!! ---
+
+
 const app = express();
 
 // Middleware
-// --- بداية الإصلاح النهائي لـ CORS ---
 const allowedOrigins = [
   'http://localhost:3000', // الرابط الافتراضي لـ React
   'http://localhost:5173', // الرابط الافتراضي لـ Vite
-  
-  // !!! تمت إضافة روابط Live Server المتوقعة !!!
-  'http://localhost:5500', 
+  'http://localhost:5500',
   'http://127.0.0.1:5500',
-  'http://localhost:5501', 
+  'http://localhost:5501',
   'http://127.0.0.1:5501',
-
+  // !!! أضف رابط Netlify هنا عند الحاجة !!!
+  // مثال: 'https://your-site-name.netlify.app'
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
-    // السماح بالطلبات إذا كانت من المصادر المسموحة أو إذا لم يكن لها مصدر (مثل Postman)
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
@@ -33,30 +39,30 @@ app.use(cors({
   },
   credentials: true,
 }));
-// --- نهاية الإصلاح ---
 
 app.use(express.json());
 
 // Routes
-// (ملفات الـ Routes هذه موجودة الآن لديك)
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/transactions', require('./routes/transactionRoutes'));
 app.use('/api/debts', require('./routes/debtRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 
+// Railway سيوفر البورت تلقائياً كمتغير بيئة اسمه PORT
 const PORT = process.env.PORT || 5000;
 
 // (استخدام الطريقة المحسّنة لبدء التشغيل)
 const startServer = async () => {
   try {
     // 1. انتظر الاتصال بقاعدة البيانات أولاً
-    await connectDB(); 
-    
+    await connectDB();
+
     // 2. إذا نجح الاتصال، قم بتشغيل الخادم
     app.listen(PORT, () => console.log(`[Server] يعمل الخادم على المنفذ ${PORT}`));
 
   } catch (error) {
-    console.error(`[Server] فشل بدء تشغيل الخادم.`);
+    // في حالة فشل connectDB، سيتم طباعة الخطأ في configdb.js والخروج
+    console.error(`[Server] فشل بدء تشغيل الخادم بسبب خطأ في قاعدة البيانات أو متغيرات البيئة.`);
   }
 };
 
