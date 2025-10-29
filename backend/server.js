@@ -26,8 +26,9 @@ const allowedOrigins = [
   'http://localhost:5501',
   'http://127.0.0.1:5501',
   // !!! أضف رابط Netlify هنا عند الحاجة !!!
-  // مثال: 'https://your-site-name.netlify.app'
+ 'https://app.netlify.com/projects/peaceful-froyo-d7a4a4/overview',
 ];
+
 
 app.use(cors({
   origin: function (origin, callback) {
