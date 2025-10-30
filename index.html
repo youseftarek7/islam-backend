@@ -1,0 +1,1763 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>نظام إسلام لإدارة المعاملات والديون</title>
+    <!-- تحميل مكتبة Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- تحميل مكتبة Chart.js للرسوم البيانية -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- !!! إضافة مكتبات React و Babel !!! -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- !!! إضافة مكتبات التصدير !!! -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <style>
+        /* إضافة خط عربي افتراضي (اختياري) */
+        @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Cairo', sans-serif;
+            /* --- تحسينات الوضع الليلي --- */
+            @apply bg-gray-100 text-gray-900 transition-colors duration-300;
+        }
+        
+        /* --- كلاس الوضع الليلي --- */
+        /* !!! تعديل: استهداف html.dark body بدلاً من .dark body !!! */
+        html.dark body {
+            @apply bg-gray-900 text-gray-100;
+        }
+        .dark .card {
+             @apply bg-gray-800 text-gray-100 border-gray-700;
+        }
+        .dark .modal-content {
+             @apply bg-gray-800 text-gray-100;
+        }
+        .dark .table-header {
+             @apply bg-gray-700 text-gray-200;
+        }
+         .dark .table-row {
+             @apply hover:bg-gray-700 border-gray-700;
+        }
+        .dark .form-input {
+             @apply bg-gray-700 border-gray-600 text-white focus:ring-blue-500 focus:border-blue-500;
+        }
+         .dark .form-select {
+             @apply bg-gray-700 border-gray-600 text-white;
+        }
+
+        /* إخفاء أسهم حقول الأرقام */
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        input[type=number] {
+            -moz-appearance: textfield;
+        }
+        /* لإصلاح مشكلة تداخل النافذة المنبثقة للـ PDF */
+        .modal-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 40;
+            @apply transition-opacity duration-300;
+        }
+        .modal-content {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 50;
+            @apply transition-all duration-300;
+        }
+        /* زر تحميل Gemini */
+        .gemini-btn-loading {
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+        .gemini-btn-loading svg {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        /* --- إعدادات Tailwind للوضع الليلي --- */
+    </style>
+    <script>
+        // --- إعدادات Tailwind للوضع الليلي ---
+        tailwind.config = {
+          darkMode: 'class', // تفعيل الوضع الليلي بناءً على كلاس
+          theme: {
+            extend: {
+              fontFamily: {
+                sans: ['Cairo', 'sans-serif'],
+              },
+            },
+          },
+        }
+
+        // --- كود تشغيل الوضع الليلي قبل تحميل الصفحة ---
+        // (الكود سليم ويستهدف document.documentElement)
+        if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+    </script>
+</head>
+<body class="bg-gray-100">
+
+    <!-- حاوية React -->
+    <div id="root"></div>
+
+    <!-- كود React (Babel) -->
+    <script type="text/babel">
+        // ======================================
+        //          React App (SPA)
+        // ======================================
+        const { useState, useEffect, useRef, useMemo, createContext, useContext } = React;
+
+        // ثابت لعنوان الخادم
+       const API_URL = 'https://islam-backend-production-8753.up.railway.app/'; // تأكد أن هذا هو البورت الصحيح للخادم
+
+        // ======================================
+        //          خدمات المصادقة (Auth)
+        // ======================================
+        const authService = {
+            getToken: () => localStorage.getItem('token'),
+
+            setToken: (token) => localStorage.setItem('token', token),
+
+            getAuthHeaders: () => ({
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authService.getToken()}`
+            }),
+
+            // --- !!! دالة مساعدة جديدة لاستدعاءات API مع معالجة أخطاء أفضل !!! ---
+            fetchApi: async (url, options = {}) => {
+                try {
+                    const defaultHeaders = authService.getToken() ? authService.getAuthHeaders() : { 'Content-Type': 'application/json' };
+                    const config = {
+                        ...options,
+                        headers: {
+                            ...defaultHeaders,
+                            ...options.headers,
+                        },
+                    };
+
+                    const res = await fetch(url, config);
+
+                    const contentType = res.headers.get("content-type");
+                    const isJson = contentType && contentType.indexOf("application/json") !== -1;
+
+                    if (!res.ok) {
+                        let errorData;
+                        let errorMessage = `HTTP error ${res.status}`;
+                        try {
+                            if (isJson) {
+                                errorData = await res.json();
+                                errorMessage = errorData.message || JSON.stringify(errorData);
+                            } else {
+                                // محاولة قراءة النص إذا لم يكن JSON (قد يكون HTML لصفحة خطأ)
+                                errorMessage = await res.text();
+                            }
+                        } catch (parseError) {
+                             // إذا فشل تحليل استجابة الخطأ
+                             errorMessage = await res.text(); // الرجوع إلى النص الخام
+                        }
+                        console.error(`API Error (${res.status}) on ${url}:`, errorMessage);
+                        // رمي الخطأ ليتم التقاطه بواسطة الدالة المستدعية
+                        throw new Error(errorData?.message || `خطأ ${res.status} من الخادم.`);
+                    }
+
+                    // التعامل مع الاستجابات الناجحة
+                    if (res.status === 204 || res.headers.get('Content-Length') === '0') {
+                         // استجابة بدون محتوى
+                         return null;
+                    }
+
+                    if (isJson) {
+                        return await res.json(); // إرجاع بيانات JSON المحللة
+                    } else {
+                        // التعامل مع استجابة ناجحة غير متوقعة (ليست JSON)
+                        const responseText = await res.text();
+                        console.warn(`API Success - Non-JSON Response on ${url}:`, responseText);
+                        // يمكن رمي خطأ هنا إذا كان JSON متوقعًا بشكل صارم
+                        return responseText;
+                    }
+
+                } catch (error) { // يلتقط أخطاء الشبكة والأخطاء التي تم رميها أعلاه
+                    console.error(`Fetch API Error on ${url}:`, error);
+                    // إعادة رمي الخطأ حتى يعرف المكون المستدعي بحدوث خطأ
+                    // إضافة رسالة سهلة الفهم للمستخدم إن أمكن، أو ترك المعالجة للمستدعي.
+                    throw new Error(error.message || 'فشل الاتصال بالخادم.');
+                }
+            },
+
+            // !!! إصلاح: إعادة إضافة دالة register !!!
+            register: async (name, email, password) => {
+                try {
+                    // استخدام fetchApi بدلاً من fetch المباشر
+                    const data = await authService.fetchApi(`${API_URL}/api/auth/register`, {
+                        method: 'POST',
+                        body: JSON.stringify({ name, email, password })
+                    });
+                    // إذا نجح fetchApi، يفترض أن data تحتوي على رسالة النجاح
+                    return { success: true, message: data.message || "تم التسجيل بنجاح! يمكنك الآن تسجيل الدخول." };
+                } catch (error) {
+                    // الأخطاء من fetchApi (بما في ذلك أخطاء الخادم وأخطاء الشبكة) تصل هنا
+                    console.error("AuthService Register Error:", error);
+                    return { success: false, message: error.message || 'فشل التسجيل. حاول مرة أخرى.' };
+                }
+            },
+
+            // !!! إصلاح: إعادة إضافة دالة login !!!
+            login: async (email, password) => {
+                try {
+                    // استخدام fetchApi
+                    const data = await authService.fetchApi(`${API_URL}/api/auth/login`, {
+                        method: 'POST',
+                        body: JSON.stringify({ email, password })
+                    });
+                    // إذا نجح fetchApi، يجب أن يحتوي data على التوكن وبيانات المستخدم
+                    if (data && data.token) {
+                        authService.setToken(data.token);
+                        return { success: true, user: { name: data.name, email: data.email } };
+                    } else {
+                        // حالة نجاح fetchApi ولكن الاستجابة غير متوقعة
+                        return { success: false, message: 'استجابة غير متوقعة من الخادم.' };
+                    }
+                } catch (error) {
+                     // الأخطاء من fetchApi
+                     console.error("AuthService Login Error:", error);
+                     return { success: false, message: error.message || 'بيانات الدخول غير صحيحة أو حدث خطأ بالخادم.' };
+                }
+            },
+
+            logout: () => {
+                localStorage.removeItem('token');
+            },
+
+            getMe: async () => {
+                 if (!authService.getToken()) {
+                    return { success: false, message: 'No token' };
+                 }
+                 try {
+                    // استخدام fetchApi
+                    const userData = await authService.fetchApi(`${API_URL}/api/auth/me`);
+                    return { success: true, user: userData };
+
+                 } catch(e) {
+                    authService.logout(); // تنظيف التوكن المنتهي الصلاحية
+                    return { success: false, message: e.message };
+                 }
+            }
+        };
+
+        // ======================================
+        //          !!! خدمة Gemini API !!!
+        // ======================================
+        const geminiService = {
+            apiKey: "", // سيتم توفيره بواسطة البيئة
+            apiUrl: `https://generativelace.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=`,
+
+            // استخدام fetchApi الخاص بنا للاتساق وإعادة المحاولة
+            fetchWithRetry: async (url, options, retries = 3, delay = 1000) => {
+                 // بما أن fetchApi لديه منطق retry ضمني (عبر رمي الخطأ)،
+                 // يمكن تبسيط هذا أو استخدام fetchApi مباشرة.
+                 // للاختصار الآن، سنبقي على fetch الأصلي هنا.
+                 // للتطوير المستقبلي: دمج هذا مع fetchApi.
+                for (let i = 0; i < retries; i++) {
+                    try {
+                        const response = await fetch(url, options);
+                        if (response.ok) {
+                            return await response.json();
+                        }
+                        if (response.status === 429) {
+                            console.warn(`Gemini API rate limit hit. Retrying in ${delay / 1000}s...`);
+                            await new Promise(res => setTimeout(res, delay * (i + 1)));
+                        } else {
+                            const errorData = await response.json();
+                            throw new Error(errorData.error?.message || `HTTP error! status: ${response.status}`);
+                        }
+                    } catch (error) {
+                        if (i === retries - 1) throw error;
+                    }
+                }
+            },
+
+            generateText: async (prompt) => {
+                const payload = {
+                    contents: [{ parts: [{ text: prompt }] }],
+                    systemInstruction: {
+                        parts: [{ text: "أنت مساعد ذكي تتحدث باللغة العربية بطلاقة وودودة." }]
+                    },
+                };
+
+                try {
+                    const result = await geminiService.fetchWithRetry(geminiService.apiUrl + geminiService.apiKey, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (text) {
+                        return { success: true, text: text };
+                    } else {
+                        throw new Error("No content generated.");
+                    }
+                } catch (error) {
+                    console.error("Error generating Gemini text:", error);
+                    return { success: false, message: error.message };
+                }
+            },
+
+            generateJson: async (prompt, schema) => {
+                const payload = {
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: schema
+                    },
+                    systemInstruction: {
+                         parts: [{ text: "أنت مساعد متخصص في استخراج البيانات (JSON) من نصوص عربية." }]
+                    }
+                };
+
+                try {
+                    const result = await geminiService.fetchWithRetry(geminiService.apiUrl + geminiService.apiKey, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (jsonText) {
+                        return { success: true, data: JSON.parse(jsonText) };
+                    } else {
+                        throw new Error("No structured content generated.");
+                    }
+                } catch (error) {
+                    console.error("Error generating Gemini JSON:", error);
+                    return { success: false, message: error.message };
+                }
+            }
+        };
+
+
+        // ======================================
+        //          خدمات التصدير (Export)
+        // ======================================
+        const exportService = {
+            exportToExcel: (data, fileName) => {
+                const ws = window.XLSX.utils.json_to_sheet(data);
+                const wb = window.XLSX.utils.book_new();
+                window.XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+                window.XLSX.writeFile(wb, `${fileName}.xlsx`);
+            },
+
+            exportToPDF: (tableId, fileName) => {
+                const table = document.getElementById(tableId);
+                if (!table) {
+                    console.error("Table element not found!");
+                    return;
+                }
+
+                window.html2canvas(table, {
+                    useCORS: true,
+                    scale: 2
+                }).then(canvas => {
+                    const imgData = canvas.toDataURL('image/png');
+                    const pdf = new window.jspdf.jsPDF({
+                        orientation: 'landscape',
+                        unit: 'mm',
+                        format: 'a4'
+                    });
+
+                    const pdfWidth = pdf.internal.pageSize.getWidth();
+                    const pdfHeight = pdf.internal.pageSize.getHeight();
+                    const canvasWidth = canvas.width;
+                    const canvasHeight = canvas.height;
+                    const ratio = canvasWidth / canvasHeight;
+
+                    let imgWidth = pdfWidth - 20;
+                    let imgHeight = imgWidth / ratio;
+
+                    if (imgHeight > pdfHeight - 20) {
+                        imgHeight = pdfHeight - 20;
+                        imgWidth = imgHeight * ratio;
+                    }
+
+                    const x = (pdfWidth - imgWidth) / 2;
+                    const y = 10;
+
+                    pdf.addImage(imgData, 'PNG', x, y, imgWidth, imgHeight);
+                    pdf.save(`${fileName}.pdf`);
+                });
+            }
+        };
+
+        // ======================================
+        //          مكونات الرسوم البيانية
+        // ======================================
+
+        // !!! تعديل: استقبال isDarkMode كـ prop !!!
+        const TransactionsLineChart = ({ chartData, isDarkMode }) => {
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+            // !!! إزالة: const isDarkMode = document.documentElement.classList.contains('dark');
+
+            useEffect(() => {
+                if (chartInstance.current) {
+                    chartInstance.current.destroy();
+                }
+
+                const data = {
+                    labels: chartData.labels,
+                    datasets: [{
+                        label: 'عدد المعاملات',
+                        data: chartData.data,
+                        backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                        borderColor: 'rgba(59, 130, 246, 1)',
+                        borderWidth: 1,
+                        fill: true,
+                        tension: 0.3
+                    }]
+                };
+
+                const ctx = chartRef.current.getContext('2d');
+                chartInstance.current = new Chart(ctx, {
+                    type: 'line',
+                    data: data,
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: {
+                                    stepSize: 1,
+                                    // !!! استخدام isDarkMode (prop) !!!
+                                    color: isDarkMode ? '#CBD5E1' : '#374151'
+                                },
+                                grid: {
+                                    // !!! استخدام isDarkMode (prop) !!!
+                                    color: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'
+                                }
+                            },
+                            x: {
+                                ticks: {
+                                    // !!! استخدام isDarkMode (prop) !!!
+                                    color: isDarkMode ? '#CBD5E1' : '#374151'
+                                },
+                                grid: {
+                                    // !!! استخدام isDarkMode (prop) !!!
+                                    color: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                             tooltip: {
+                                rtl: true,
+                                bodyFont: { family: "'Cairo', sans-serif" },
+                                titleFont: { family: "'Cairo', sans-serif" }
+                            }
+                        }
+                    }
+                });
+
+                return () => {
+                    if (chartInstance.current) {
+                        chartInstance.current.destroy();
+                    }
+                };
+            // !!! تعديل: إضافة isDarkMode إلى مصفوفة الاعتمادية !!!
+            }, [chartData, isDarkMode]);
+
+            return <canvas ref={chartRef}></canvas>;
+        };
+
+        // !!! تعديل: استقبال isDarkMode كـ prop !!!
+        const VisaPieChart = ({ pieData, isDarkMode }) => {
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+            // !!! إزالة: const isDarkMode = document.documentElement.classList.contains('dark');
+
+            useEffect(() => {
+                if (chartInstance.current) {
+                    chartInstance.current.destroy();
+                }
+
+                const data = {
+                    labels: pieData.labels,
+                    datasets: [{
+                        label: 'أنواع التأشيرات',
+                        data: pieData.data,
+                        backgroundColor: [
+                            'rgba(59, 130, 246, 0.7)',
+                            'rgba(239, 68, 68, 0.7)',
+                            'rgba(16, 185, 129, 0.7)',
+                            'rgba(245, 158, 11, 0.7)',
+                            'rgba(139, 92, 246, 0.7)',
+                            'rgba(236, 72, 153, 0.7)',
+                        ],
+                        // !!! استخدام isDarkMode (prop) !!!
+                        borderColor: isDarkMode ? '#1F2937' : '#FFF',
+                        borderWidth: 2
+                    }]
+                };
+
+                const ctx = chartRef.current.getContext('2d');
+                chartInstance.current = new Chart(ctx, {
+                    type: 'pie',
+                    data: data,
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                                labels: {
+                                    font: { family: "'Cairo', sans-serif", size: 14 },
+                                    // !!! استخدام isDarkMode (prop) !!!
+                                    color: isDarkMode ? '#CBD5E1' : '#374151'
+                                }
+                            },
+                            tooltip: {
+                                rtl: true,
+                                bodyFont: { family: "'Cairo', sans-serif" },
+                                titleFont: { family: "'Cairo', sans-serif" }
+                            }
+                        }
+                    }
+                });
+
+                return () => {
+                    if (chartInstance.current) {
+                        chartInstance.current.destroy();
+                    }
+                };
+            // !!! تعديل: إضافة isDarkMode إلى مصفوفة الاعتمادية !!!
+            }, [pieData, isDarkMode]);
+
+            return <canvas ref={chartRef} style={{maxHeight: '400px'}}></canvas>;
+        };
+
+        // ======================================
+        //          المكونات الفرعية
+        // ======================================
+
+        // (الكود لم يتغير هنا - سليم)
+        const SummaryCards = ({ stats }) => {
+            return (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-6">
+                    <StatCard title="إجمالي المبالغ المدفوعة" value={stats.totalPaid} color="blue" />
+                    <StatCard title="إجمالي المبالغ المتبقية" value={stats.totalRemaining} color="yellow" />
+                    <StatCard title="إجمالي الديون (لي فلوس)" value={stats.totalTheyOwe} color="green" />
+                    <StatCard title="إجمالي الديون (عليّ فلوس)" value={stats.totalIOwe} color="red" />
+                </div>
+            );
+        };
+
+        const StatCard = ({ title, value, color }) => {
+            const colors = {
+                blue: 'border-blue-500',
+                yellow: 'border-yellow-500',
+                green: 'border-green-500',
+                red: 'border-red-500',
+            };
+            return (
+                <div className={`card bg-white p-6 rounded-lg shadow-md border-r-4 ${colors[color]}`}>
+                    <h3 className="text-gray-500 dark:text-gray-400 text-lg">{title}</h3>
+                    <p className="text-3xl font-bold text-gray-900 dark:text-white mt-2">{value.toLocaleString()} ج.م</p>
+                </div>
+            );
+        };
+
+        const ExportButtons = ({ data, tableId, fileName }) => {
+            const handleExcelExport = () => {
+                const cleanData = data.map(item => {
+                    const { _id, user, createdAt, updatedAt, __v, ...rest } = item;
+                    return rest;
+                });
+                exportService.exportToExcel(cleanData, fileName);
+            };
+
+            const handlePdfExport = () => {
+                exportService.exportToPDF(tableId, fileName);
+            };
+
+            return (
+                <div className="flex gap-2">
+                    <button
+                        onClick={handleExcelExport}
+                        className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium text-sm hover:bg-green-700 transition-colors duration-300">
+                        تصدير Excel
+                    </button>
+                    <button
+                        onClick={handlePdfExport}
+                        className="bg-red-600 text-white px-4 py-2 rounded-lg font-medium text-sm hover:bg-red-700 transition-colors duration-300">
+                        تصدير PDF
+                    </button>
+                </div>
+            );
+        };
+
+        // !!! تعديل: استقبال isDarkMode و onToggle كـ props !!!
+        const Navbar = ({ setPage, setUser, user, isDarkMode, onToggle }) => {
+            const [activePage, setActivePage] = useState('dashboard');
+            const [isMenuOpen, setIsMenuOpen] = useState(false);
+            // !!! إزالة: const [isDarkMode, setIsDarkMode] = useState(document.documentElement.classList.contains('dark'));
+
+            const handleNav = (page) => {
+                setActivePage(page);
+                setPage(page);
+                setIsMenuOpen(false);
+            };
+
+            const handleLogout = () => {
+                authService.logout();
+                setUser(null);
+                setPage('login');
+            };
+
+            // !!! إزالة: دالة toggleDarkMode المحلية
+            // const toggleDarkMode = () => { ... };
+
+            return (
+                <nav className="bg-blue-600 text-white shadow-md sticky top-0 z-30">
+                    <div className="container mx-auto px-4">
+                        <div className="flex justify-between items-center py-4">
+                            <h1 className="text-xl md:text-2xl font-bold">نظام إسلام لإدارة المعاملات</h1>
+
+                            <div className="md:hidden flex items-center gap-2">
+                                {/* !!! تعديل: استخدام onToggle من props !!! */}
+                                <DarkModeToggle isDarkMode={isDarkMode} onToggle={onToggle} />
+                                <button onClick={() => setIsMenuOpen(!isMenuOpen)}>
+                                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        {isMenuOpen ? (
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                        ) : (
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16m-7 6h7" />
+                                        )}
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <div className="hidden md:flex items-center gap-4">
+                                <span className="text-sm">مرحبًا، {user.name || 'زائر'}</span>
+                                <NavButton label="لوحة التحكم" page="dashboard" activePage={activePage} onClick={handleNav} />
+                                <NavButton label="المعاملات" page="transactions" activePage={activePage} onClick={handleNav} />
+                                <NavButton label="الديون" page="debts" activePage={activePage} onClick={handleNav} />
+                                {/* !!! تعديل: استخدام onToggle من props !!! */}
+                                <DarkModeToggle isDarkMode={isDarkMode} onToggle={onToggle} />
+                                <button
+                                    onClick={handleLogout}
+                                    className="px-3 py-2 rounded-md font-medium bg-red-500 hover:bg-red-600 transition-colors duration-300">
+                                    تسجيل الخروج
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {isMenuOpen && (
+                        <div className="md:hidden absolute top-full left-0 right-0 bg-blue-600 border-t border-blue-700">
+                            <div className="flex flex-col px-2 pt-2 pb-3 space-y-1">
+                                <NavButton label="لوحة التحكم" page="dashboard" activePage={activePage} onClick={handleNav} isMobile />
+                                <NavButton label="المعاملات" page="transactions" activePage={activePage} onClick={handleNav} isMobile />
+                                <NavButton label="الديون" page="debts" activePage={activePage} onClick={handleNav} isMobile />
+                                <button
+                                    onClick={handleLogout}
+                                    className="block w-full text-right px-3 py-2 rounded-md font-medium bg-red-500 hover:bg-red-600 transition-colors duration-300">
+                                    تسجيل الخروج
+                                </button>
+                                <span className="px-3 py-2 text-sm text-blue-200">مرحبًا، {user.name || 'زائر'}</span>
+                            </div>
+                        </div>
+                    )}
+                </nav>
+            );
+        };
+
+        const DarkModeToggle = ({ isDarkMode, onToggle }) => (
+            <button onClick={onToggle} title={isDarkMode ? 'تفعيل الوضع النهاري' : 'تفعيل الوضع الليلي'}
+                className="p-2 rounded-full hover:bg-blue-700 transition-colors duration-200">
+                {isDarkMode ? (
+                    <svg className="w-5 h-5 text-yellow-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                    </svg>
+                ) : (
+                    <svg className="w-5 h-5 text-gray-200" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                    </svg>
+                )}
+            </button>
+        );
+
+        const NavButton = ({ label, page, activePage, onClick, isMobile = false }) => (
+            <button
+                onClick={() => onClick(page)}
+                className={`px-3 py-2 rounded-md font-medium transition-colors duration-300 ${
+                    activePage === page ? 'bg-blue-700' : 'hover:bg-blue-700'
+                } ${isMobile ? 'block w-full text-right' : ''}`}>
+                {label}
+            </button>
+        );
+
+        const Modal = ({ children, onClose }) => (
+            <div className="modal-backdrop" onClick={onClose}>
+                <div className="modal-content card bg-white p-6 rounded-lg shadow-xl w-11/12 md:w-1/2 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                    {children}
+                </div>
+            </div>
+        );
+
+        // ======================================
+        //          صفحات المصادقة (Auth Pages)
+        // ======================================
+
+        // (الكود لم يتغير هنا - سليم)
+        const LoginPage = ({ setPage, setUser, onLoginSuccess }) => {
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+            const [loading, setLoading] = useState(false);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setError('');
+                setLoading(true);
+                const result = await authService.login(email, password);
+                if (result.success) {
+                    setUser(result.user);
+                    onLoginSuccess(); // استدعاء لجلب البيانات الجديدة
+                    setPage('dashboard');
+                } else {
+                    setError(result.message);
+                }
+                setLoading(false);
+            };
+
+            return (
+                <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900 px-4">
+                    <div className="card bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+                        <h2 className="text-3xl font-bold text-center text-gray-800 dark:text-white mb-6">تسجيل الدخول</h2>
+                        {error && <p className="bg-red-100 text-red-700 p-3 rounded-lg mb-4">{error}</p>}
+                        <form onSubmit={handleSubmit}>
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">البريد الإلكتروني</label>
+                                <input
+                                    type="email"
+                                    value={email}
+                                    onChange={e => setEmail(e.target.value)}
+                                    className="form-input w-full p-2 border border-gray-300 rounded-lg" required />
+                            </div>
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">كلمة المرور</label>
+                                <input
+                                    type="password"
+                                    value={password}
+                                    onChange={e => setPassword(e.target.value)}
+                                    className="form-input w-full p-2 border border-gray-300 rounded-lg" required />
+                            </div>
+                            <button type="submit" disabled={loading} className="w-full bg-blue-500 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-600 transition-colors duration-300 disabled:bg-blue-300">
+                                {loading ? 'جاري الدخول...' : 'دخول'}
+                            </button>
+                        </form>
+                        <p className="text-center mt-4 text-sm text-gray-600 dark:text-gray-400">
+                            ليس لديك حساب؟ <button onClick={() => setPage('register')} className="text-blue-500 hover:underline">سجل الآن</button>
+                        </p>
+                    </div>
+                </div>
+            );
+        };
+
+        const RegisterPage = ({ setPage }) => {
+            const [name, setName] = useState('');
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [confirmPassword, setConfirmPassword] = useState('');
+            const [error, setError] = useState('');
+            const [success, setSuccess] = useState('');
+            const [loading, setLoading] = useState(false);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setError('');
+                setSuccess('');
+                if (password !== confirmPassword) {
+                    setError("كلمتا المرور غير متطابقتين.");
+                    return;
+                }
+                setLoading(true);
+                const result = await authService.register(name, email, password);
+                if (result.success) {
+                    setSuccess(result.message);
+                    setTimeout(() => setPage('login'), 2000);
+                } else {
+                    setError(result.message);
+                }
+                setLoading(false);
+            };
+
+            return (
+                <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900 px-4">
+                    <div className="card bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+                        <h2 className="text-3xl font-bold text-center text-gray-800 dark:text-white mb-6">إنشاء حساب جديد</h2>
+                        {error && <p className="bg-red-100 text-red-700 p-3 rounded-lg mb-4">{error}</p>}
+                        {success && <p className="bg-green-100 text-green-700 p-3 rounded-lg mb-4">{success}</p>}
+                        <form onSubmit={handleSubmit}>
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">الاسم</label>
+                                <input type="text" value={name} onChange={e => setName(e.target.value)} className="form-input w-full p-2 border border-gray-300 rounded-lg" required />
+                            </div>
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">البريد الإلكتروني</label>
+                                <input type="email" value={email} onChange={e => setEmail(e.target.value)} className="form-input w-full p-2 border border-gray-300 rounded-lg" required />
+                            </div>
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">كلمة المرور</label>
+                                <input type="password" value={password} onChange={e => setPassword(e.target.value)} className="form-input w-full p-2 border border-gray-300 rounded-lg" required />
+                            </div>
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">تأكيد كلمة المرور</label>
+                                <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className="form-input w-full p-2 border border-gray-300 rounded-lg" required />
+                            </div>
+                            <button type="submit" disabled={loading} className="w-full bg-green-500 text-white px-6 py-2 rounded-lg font-medium hover:bg-green-600 transition-colors duration-300 disabled:bg-green-300">
+                                {loading ? 'جاري الإنشاء...' : 'إنشاء حساب'}
+                            </button>
+                        </form>
+                        <p className="text-center mt-4 text-sm text-gray-600 dark:text-gray-400">
+                            لديك حساب بالفعل؟ <button onClick={() => setPage('login')} className="text-blue-500 hover:underline">سجل الدخول</button>
+                        </p>
+                    </div>
+                </div>
+            );
+        };
+
+        // ======================================
+        //          الصفحات الرئيسية
+        // ======================================
+
+        // !!! تعديل: استقبال isDarkMode كـ prop !!!
+        const DashboardPage = ({ isDarkMode }) => {
+            const [stats, setStats] = useState({
+                totalPaid: 0,
+                totalRemaining: 0,
+                totalTheyOwe: 0,
+                totalIOwe: 0,
+            });
+            const [chartData, setChartData] = useState({ labels: [], data: [] });
+            const [pieData, setPieData] = useState({ labels: [], data: [] });
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                const fetchData = async () => {
+                    setLoading(true);
+                    try {
+                        // استخدام fetchApi
+                        const [statsData, chartApiData, pieApiData] = await Promise.all([
+                            authService.fetchApi(`${API_URL}/api/dashboard/stats`),
+                            authService.fetchApi(`${API_URL}/api/dashboard/chart`),
+                            authService.fetchApi(`${API_URL}/api/dashboard/piechart`)
+                        ]);
+
+                        setStats(statsData || { totalPaid: 0, totalRemaining: 0, totalTheyOwe: 0, totalIOwe: 0 });
+                        setChartData(chartApiData || { labels: [], data: [] });
+                        setPieData(pieApiData || { labels: [], data: [] });
+
+                    } catch (error) {
+                        console.error("Failed to fetch dashboard data:", error);
+                        // عرض رسالة خطأ للمستخدم (اختياري)
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+                fetchData();
+            }, []);
+
+            if (loading) {
+                 return <div className="text-center p-10 text-xl">... جاري تحميل بيانات لوحة التحكم ...</div>;
+            }
+
+            return (
+                <div>
+                    <h2 className="text-3xl font-bold text-gray-800 dark:text-white mb-6">لوحة التحكم</h2>
+                    <SummaryCards stats={stats} />
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                        <div className="card bg-white p-6 rounded-lg shadow-md">
+                            <h3 className="text-xl font-bold text-gray-800 dark:text-white mb-4">المعاملات (آخر 30 يومًا)</h3>
+                            {/* !!! تعديل: تمرير isDarkMode !!! */}
+                            <TransactionsLineChart chartData={chartData} isDarkMode={isDarkMode} />
+                        </div>
+                        <div className="card bg-white p-6 rounded-lg shadow-md">
+                            <h3 className="text-xl font-bold text-gray-800 dark:text-white mb-4">توزيع أنواع التأشيرات</h3>
+                             {/* !!! تعديل: تمرير isDarkMode !!! */}
+                            <VisaPieChart pieData={pieData} isDarkMode={isDarkMode} />
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const TransactionsPage = ({ transactions, onDataChange }) => {
+            const [search, setSearch] = useState('');
+            const [showForm, setShowForm] = useState(false);
+            const [editingItem, setEditingItem] = useState(null);
+             const [isDeleting, setIsDeleting] = useState(null); // حالة للتحميل عند الحذف
+             const [isSaving, setIsSaving] = useState(false); // حالة للتحميل عند الحفظ
+
+            // !!! تعديل: useMemo لإرجاع البيانات المفلترة والإجماليات !!!
+            const { filteredTransactions, totals } = useMemo(() => {
+                let totalPaid = 0;
+                let totalRemaining = 0;
+
+                const filtered = transactions.filter(t =>
+                    t.name.toLowerCase().includes(search.toLowerCase()) ||
+                    (t.deliveryDate && t.deliveryDate.includes(search)) ||
+                    t.type.toLowerCase().includes(search.toLowerCase())
+                );
+
+                // حساب الإجماليات من البيانات *المفلترة*
+                filtered.forEach(t => {
+                    totalPaid += t.paid || 0;
+                    totalRemaining += t.remaining || 0;
+                });
+                
+                // فرز البيانات المفلترة
+                const sortedFiltered = filtered.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+                return { 
+                    filteredTransactions: sortedFiltered, 
+                    totals: { 
+                        paid: totalPaid, 
+                        remaining: totalRemaining 
+                    } 
+                };
+            }, [transactions, search]);
+
+            const handleEdit = (item) => {
+                setEditingItem(item);
+                setShowForm(true);
+            };
+
+            const handleDelete = async (id) => {
+                // !!! تعديل: استخدام نافذة تأكيد مخصصة بدلاً من confirm() !!!
+                // ملاحظة: هذا يتطلب مكون Modal مخصص للتأكيد، للتبسيط سنبقي على confirm مؤقتًا
+                // لإزالة confirm() بشكل صحيح، ستحتاج إلى حالة جديدة (e.g., [showDeleteConfirm, setShowDeleteConfirm])
+                // وعرض Modal يسأل "هل أنت متأكد؟" مع زر "نعم" يستدعي الكود أدناه.
+                if (window.confirm('هل أنت متأكد من رغبتك في الحذف؟')) {
+                    setIsDeleting(id); // بدء التحميل للحذف
+                    try {
+                        // استخدام fetchApi
+                        await authService.fetchApi(`${API_URL}/api/transactions/${id}`, { method: 'DELETE' });
+                        onDataChange();
+                    } catch (error) {
+                         console.error("Error deleting transaction:", error);
+                         alert(`خطأ: ${error.message}`); // استبدل alert بنافذة منبثقة أفضل
+                    } finally {
+                         setIsDeleting(null); // إيقاف التحميل للحذف
+                    }
+                }
+            };
+
+            const handleSave = async (formData) => {
+                setIsSaving(true); // بدء التحميل للحفظ
+                try {
+                    const url = editingItem
+                        ? `${API_URL}/api/transactions/${editingItem._id}`
+                        : `${API_URL}/api/transactions`;
+
+                    const method = editingItem ? 'PUT' : 'POST';
+
+                    // استخدام fetchApi
+                    await authService.fetchApi(url, {
+                        method: method,
+                        body: JSON.stringify(formData)
+                    });
+
+                    onDataChange();
+                    setShowForm(false);
+                    setEditingItem(null);
+
+                } catch (error) {
+                    console.error("Error saving transaction:", error);
+                    alert(`خطأ: ${error.message}`); // استبدل alert بنافذة منبثقة أفضل
+                } finally {
+                     setIsSaving(false); // إيقاف التحميل للحفظ
+                }
+            };
+
+            const handleCloseForm = () => {
+                setShowForm(false);
+                setEditingItem(null);
+            };
+
+            return (
+                <div>
+                    <h2 className="text-3xl font-bold text-gray-800 dark:text-white mb-6">إدارة المعاملات</h2>
+
+                    <div className="card bg-white p-4 rounded-lg shadow-md mb-6 flex flex-col md:flex-row justify-between items-center gap-4">
+                        <input
+                            type="text"
+                            placeholder="ابحث بالاسم أو تاريخ الاستلام أو النوع..."
+                            className="form-input w-full md:w-1/3 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                        />
+                        <div className="flex gap-2 w-full md:w-auto">
+                            {/* !!! تعديل: تمرير البيانات المفلترة فقط للتصدير !!! */}
+                            <ExportButtons data={filteredTransactions} tableId="transactions-table" fileName="transactions_report" />
+                            <button onClick={() => setShowForm(true)} className="w-full md:w-auto bg-blue-500 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-600 transition-colors duration-300">
+                                + إضافة معاملة
+                            </button>
+                        </div>
+                    </div>
+
+                    {showForm && (
+                        <Modal onClose={handleCloseForm}>
+                            <TransactionForm item={editingItem} onSave={handleSave} onClose={handleCloseForm} isSaving={isSaving}/>
+                        </Modal>
+                    )}
+
+                    <div className="card bg-white rounded-lg shadow-md overflow-x-auto">
+                        <table className="w-full table-auto text-right" id="transactions-table">
+                            <thead className="table-header bg-gray-200">
+                                <tr>
+                                    <th className="p-4 font-bold text-gray-700 dark:text-gray-200">الاسم</th>
+                                    <th className="p-4 font-bold text-gray-700 dark:text-gray-200">النوع</th>
+                                    <th className="p-4 font-bold text-gray-700 dark:text-gray-200">المقدم</th>
+                                    <th className="p-4 font-bold text-gray-700 dark:text-gray-200">الباقي</th>
+                                    <th className="p-4 font-bold text-gray-700 dark:text-gray-200">ت. الاستلام</th>
+                                    <th className="p-4 font-bold text-gray-700 dark:text-gray-200 hidden md:table-cell">ملاحظات</th>
+                                    <th className="p-4 font-bold text-gray-700 dark:text-gray-200">إجراءات</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                {filteredTransactions.length === 0 ? (
+                                    <tr><td colSpan="7" className="p-4 text-center text-gray-500 dark:text-gray-400">لا توجد معاملات لعرضها.</td></tr>
+                                ) : (
+                                    filteredTransactions.map(t => (
+                                        <tr key={t._id} className="table-row">
+                                            <td className="p-4">{t.name}</td>
+                                            <td className="p-4">{t.type}</td>
+                                            <td className="p-4 text-green-600 font-medium">{t.paid.toLocaleString()} ج.م</td>
+                                            <td className="p-4 text-red-600 font-medium">{t.remaining.toLocaleString()} ج.م</td>
+                                            <td className="p-4 whitespace-nowrap">{t.deliveryDate ? new Date(t.deliveryDate).toLocaleDateString('ar-EG') : 'N/A'}</td>
+                                            <td className="p-4 truncate max-w-xs hidden md:table-cell">{t.notes}</td>
+                                            <td className="p-4 flex gap-2">
+                                                 {/* إظهار أيقونة تحميل عند الحذف */}
+                                                {isDeleting === t._id ? (
+                                                    <span className="text-gray-400">جاري الحذف...</span>
+                                                ) : (
+                                                    <>
+                                                        <EditButton onClick={() => handleEdit(t)} />
+                                                        <DeleteButton onClick={() => handleDelete(t._id)} />
+                                                    </>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                            {/* !!! إضافة: قسم الإجماليات (tfoot) !!! */}
+                            {filteredTransactions.length > 0 && (
+                                <tfoot className="table-header bg-gray-100 dark:bg-gray-700 border-t-2 border-gray-300 dark:border-gray-600">
+                                    <tr>
+                                        <td className="p-4 font-bold text-gray-800 dark:text-white" colSpan="2">الإجمالي (للنتائج المعروضة)</td>
+                                        <td className="p-4 font-bold text-green-700 dark:text-green-400">{totals.paid.toLocaleString()} ج.م</td>
+                                        <td className="p-4 font-bold text-red-700 dark:text-red-400">{totals.remaining.toLocaleString()} ج.م</td>
+                                        <td className="p-4" colSpan="3"></td>
+                                    </tr>
+                                </tfoot>
+                            )}
+                        </table>
+                    </div>
+                </div>
+            );
+        };
+
+         const DebtsPage = ({ debts, onDataChange }) => {
+            const [search, setSearch] = useState('');
+            const [showForm, setShowForm] = useState(false);
+            const [editingItem, setEditingItem] = useState(null);
+            const [aiLoading, setAiLoading] = useState(false);
+            const [generatedMessage, setGeneratedMessage] = useState(null);
+            const [copySuccess, setCopySuccess] = useState('');
+            const [isDeleting, setIsDeleting] = useState(null); // حالة للتحميل عند الحذف
+            const [isSaving, setIsSaving] = useState(false); // حالة للتحميل عند الحفظ
+
+            // !!! تعديل: useMemo لإرجاع البيانات المفلترة والإجماليات !!!
+            const { filteredDebts, totals } = useMemo(() => {
+                let totalTheyOwe = 0;
+                let totalIOwe = 0;
+
+                const filtered = debts.filter(d =>
+                    d.name.toLowerCase().includes(search.toLowerCase())
+                );
+                
+                // حساب الإجماليات من البيانات *المفلترة*
+                filtered.forEach(d => {
+                    if (d.status === 'they-owe') {
+                        totalTheyOwe += d.amount || 0;
+                    } else if (d.status === 'i-owe') {
+                        totalIOwe += d.amount || 0;
+                    }
+                });
+
+                // فرز البيانات المفلترة
+                const sortedFiltered = filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+                return { 
+                    filteredDebts: sortedFiltered, 
+                    totals: { 
+                        theyOwe: totalTheyOwe, 
+                        iOwe: totalIOwe 
+                    } 
+                };
+            }, [debts, search]);
+
+            const handleEdit = (item) => {
+                setEditingItem(item);
+                setShowForm(true);
+            };
+
+            const handleDelete = async (id) => {
+                if (window.confirm('هل أنت متأكد من رغبتك في الحذف؟')) {
+                    setIsDeleting(id);
+                    try {
+                        // استخدام fetchApi
+                        await authService.fetchApi(`${API_URL}/api/debts/${id}`, { method: 'DELETE' });
+                        onDataChange();
+                    } catch (error) {
+                         console.error("Error deleting debt:", error);
+                         alert(`خطأ: ${error.message}`); // استبدل alert
+                    } finally {
+                        setIsDeleting(null);
+                    }
+                }
+            };
+
+            const handleSave = async (formData) => {
+                 setIsSaving(true);
+                 try {
+                    const url = editingItem
+                        ? `${API_URL}/api/debts/${editingItem._id}`
+                        : `${API_URL}/api/debts`;
+
+                    const method = editingItem ? 'PUT' : 'POST';
+
+                    // استخدام fetchApi
+                    await authService.fetchApi(url, {
+                        method: method,
+                        body: JSON.stringify(formData)
+                    });
+
+                    onDataChange();
+                    setShowForm(false);
+                    setEditingItem(null);
+
+                } catch (error) {
+                    console.error("Error saving debt:", error);
+                    alert(`خطأ: ${error.message}`); // استبدل alert
+                } finally {
+                    setIsSaving(false);
+                }
+            };
+
+            const handleCloseForm = () => {
+                setShowForm(false);
+                setEditingItem(null);
+            };
+
+            const handleGenerateFollowup = async (debt) => {
+                setAiLoading(true);
+                setGeneratedMessage(null);
+                const prompt = `أنت مساعد محترف وودود. اكتب رسالة متابعة قصيرة ومهذبة باللغة العربية لإرسالها عبر الواتساب إلى عميل مدين بمبلغ مالي.
+
+                تفاصيل الدين:
+                - اسم العميل: ${debt.name}
+                - المبلغ: ${debt.amount.toLocaleString()} جنيه مصري
+                - تاريخ الدين: ${new Date(debt.date).toLocaleDateString('ar-EG')}
+
+                الرسالة يجب أن تكون ودودة وتذكيرية، تطلب تحديثاً بخصوص موعد الدفع. ابدأ الرسالة بـ "مرحباً ${debt.name}" واختمها بـ "شكراً لتعاونك".`;
+
+                const result = await geminiService.generateText(prompt);
+
+                if (result.success) {
+                    setGeneratedMessage({
+                        title: `رسالة متابعة إلى ${debt.name}`,
+                        content: result.text
+                    });
+                } else {
+                    alert(`خطأ في إنشاء الرسالة: ${result.message}`); // استبدل alert
+                }
+                setAiLoading(false);
+            };
+
+            const handleCopyToClipboard = () => {
+                if (generatedMessage?.content) {
+                    // !!! تعديل: استخدام document.execCommand للعمل داخل iframes !!!
+                    const textArea = document.createElement("textarea");
+                    textArea.value = generatedMessage.content;
+                    textArea.style.position = "fixed";  // منع التمرير
+                    textArea.style.top = "-9999px";
+                    textArea.style.left = "-9999px";
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    try {
+                        document.execCommand('copy');
+                        setCopySuccess('تم النسخ بنجاح!');
+                        setTimeout(() => setCopySuccess(''), 2000);
+                    } catch (err) {
+                        setCopySuccess('فشل النسخ.');
+                    }
+                    document.body.removeChild(textArea);
+                }
+            };
+
+            return (
+                <div>
+                    <h2 className="text-3xl font-bold text-gray-800 dark:text-white mb-6">إدارة الديون</h2>
+
+                    <div className="card bg-white p-4 rounded-lg shadow-md mb-6 flex flex-col md:flex-row justify-between items-center gap-4">
+                        <input
+                            type="text"
+                            placeholder="ابحث بالاسم..."
+                            className="form-input w-full md:w-1/3 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                        />
+                        <div className="flex gap-2 w-full md:w-auto">
+                             {/* !!! تعديل: تمرير البيانات المفلترة فقط للتصدير !!! */}
+                            <ExportButtons data={filteredDebts} tableId="debts-table" fileName="debts_report" />
+                            <button onClick={() => setShowForm(true)} className="w-full md:w-auto bg-blue-500 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-600 transition-colors duration-300">
+                                + إضافة دين
+                            </button>
+                        </div>
+                    </div>
+
+                    {showForm && (
+                        <Modal onClose={handleCloseForm}>
+                            <DebtForm item={editingItem} onSave={handleSave} onClose={handleCloseForm} isSaving={isSaving}/>
+                        </Modal>
+                    )}
+
+                    {generatedMessage && (
+                        <Modal onClose={() => setGeneratedMessage(null)}>
+                            <h3 className="text-2xl font-bold mb-4">{generatedMessage.title}</h3>
+                            <textarea
+                                readOnly
+                                value={generatedMessage.content}
+                                className="form-input w-full p-3 border border-gray-300 rounded-lg bg-gray-50 dark:bg-gray-700 h-48 resize-none"
+                            ></textarea>
+                            <div className="mt-4 flex gap-4 items-center">
+                                <button
+                                    onClick={handleCopyToClipboard}
+                                    className="bg-blue-500 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-600"
+                                >
+                                    نسخ النص
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setGeneratedMessage(null)}
+                                    className="bg-gray-500 text-white px-6 py-2 rounded-lg font-medium hover:bg-gray-600"
+                                >
+                                    إغلاق
+                                </button>
+                                {copySuccess && <span className="text-green-600">{copySuccess}</span>}
+                            </div>
+                        </Modal>
+                    )}
+
+
+                    <div className="card bg-white rounded-lg shadow-md overflow-x-auto">
+                        <table className="w-full table-auto text-right" id="debts-table">
+                            <thead className="table-header bg-gray-200">
+                                <tr>
+                                    <th className="p-4 font-bold text-gray-700 dark:text-gray-200">الاسم</th>
+                                    <th className="p-4 font-bold text-gray-700 dark:text-gray-200">المبلغ</th>
+                                    <th className="p-4 font-bold text-gray-700 dark:text-gray-200">الحالة</th>
+                                    <th className="p-4 font-bold text-gray-700 dark:text-gray-200">التاريخ</th>
+                                    <th className="p-4 font-bold text-gray-700 dark:text-gray-200 hidden md:table-cell">ملاحظات</th>
+                                    <th className="p-4 font-bold text-gray-700 dark:text-gray-200" colSpan="2">إجراءات</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                {filteredDebts.length === 0 ? (
+                                    <tr><td colSpan="7" className="p-4 text-center text-gray-500 dark:text-gray-400">لا توجد ديون لعرضها.</td></tr>
+                                ) : (
+                                    filteredDebts.map(d => (
+                                        <tr key={d._id} className="table-row">
+                                            <td className="p-4">{d.name}</td>
+                                            <td className="p-4 font-medium">{d.amount.toLocaleString()} ج.م</td>
+                                            <td className={`p-4 font-bold ${d.status === 'they-owe' ? 'text-green-600' : 'text-red-600'}`}>
+                                                {d.status === 'they-owe' ? 'لي فلوس' : 'عليّ فلوس'}
+                                            </td>
+                                            <td className="p-4 whitespace-nowrap">{d.date ? new Date(d.date).toLocaleDateString('ar-EG') : 'N/A'}</td>
+                                            <td className="p-4 truncate max-w-xs hidden md:table-cell">{d.notes}</td>
+                                            <td className="p-4 flex gap-2">
+                                                {/* إظهار أيقونة تحميل عند الحذف */}
+                                                {isDeleting === d._id ? (
+                                                     <span className="text-gray-400">جاري الحذف...</span>
+                                                ) : (
+                                                    <>
+                                                        <EditButton onClick={() => handleEdit(d)} />
+                                                        <DeleteButton onClick={() => handleDelete(d._id)} />
+                                                    </>
+                                                )}
+                                            </td>
+                                            <td className="p-4">
+                                                {d.status === 'they-owe' && (
+                                                    <GeminiButton
+                                                        onClick={() => handleGenerateFollowup(d)}
+                                                        isLoading={aiLoading}
+                                                        title="✨ متابعة"
+                                                    />
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                             {/* !!! إضافة: قسم الإجماليات (tfoot) !!! */}
+                            {filteredDebts.length > 0 && (
+                                <tfoot className="table-header bg-gray-100 dark:bg-gray-700 border-t-2 border-gray-300 dark:border-gray-600">
+                                    <tr>
+                                        <td className="p-4 font-bold text-gray-800 dark:text-white">إجمالي (لي فلوس)</td>
+                                        <td className="p-4 font-bold text-green-700 dark:text-green-400" colSpan="2">{totals.theyOwe.toLocaleString()} ج.م</td>
+                                        <td className="p-4" colSpan="4"></td>
+                                    </tr>
+                                    <tr>
+                                        <td className="p-4 font-bold text-gray-800 dark:text-white">إجمالي (عليّ فلوس)</td>
+                                        <td className="p-4 font-bold text-red-700 dark:text-red-400" colSpan="2">{totals.iOwe.toLocaleString()} ج.م</td>
+                                        <td className="p-4" colSpan="4"></td>
+                                    </tr>
+                                </tfoot>
+                            )}
+                        </table>
+                    </div>
+                </div>
+            );
+        };
+
+
+        // ======================================
+        //          نماذج الإدخال (Forms)
+        // ======================================
+
+        // تعديل: إضافة isSaving للنماذج لتعطيل زر الحفظ
+        const TransactionForm = ({ item, onSave, onClose, isSaving }) => {
+            const [formData, setFormData] = useState({
+                name: item?.name || '',
+                type: item?.type || 'تأشيرة سياحة - شهر',
+                paid: item?.paid || 0,
+                remaining: item?.remaining || 0,
+                deliveryDate: item?.deliveryDate ? item.deliveryDate.split('T')[0] : '',
+                notes: item?.notes || ''
+            });
+
+            const [aiLoading, setAiLoading] = useState(false);
+            const [aiError, setAiError] = useState('');
+
+            const handleChange = (e) => {
+                const { name, value, type } = e.target;
+                setFormData(prev => ({
+                    ...prev,
+                    [name]: type === 'number' ? parseFloat(value) || 0 : value
+                }));
+            };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                onSave(formData);
+            };
+
+            const handleAutoFill = async () => {
+                 if (!formData.notes) {
+                    setAiError('يرجى كتابة ملاحظات أولاً.');
+                    setTimeout(() => setAiError(''), 3000);
+                    return;
+                }
+
+                setAiLoading(true);
+                setAiError('');
+
+                const prompt = `الرجاء تحليل النص التالي باللغة العربية واستخراج تفاصيل المعاملة المالية.
+                النص: "${formData.notes}"
+
+                استخرج فقط:
+                - "name" (اسم الشخص)
+                - "paid" (المبلغ المدفوع كرقم)
+                - "remaining" (المبلغ المتبقي كرقم)
+                - "type" (نوع المعاملة، حاول مطابقته مع أحد الخيارات التالية: 'تأشيرة سياحة - شهر', 'تأشيرة سياحة - 3 شهور', 'تأشيرة عمل - سنة', 'تأشيرة عمل - 3 سنين'. إذا لم يتطابق، استخدم 'أخرى'.)
+
+                إذا لم تجد معلومة، اترك قيمتها الافتراضية (null للـ name, 0 للأرقام).`;
+
+                const schema = {
+                  "type": "OBJECT",
+                  "properties": {
+                    "name": { "type": "STRING" },
+                    "paid": { "type": "NUMBER" },
+                    "remaining": { "type": "NUMBER" },
+                    "type": { "type": "STRING" }
+                  }
+                };
+
+                const result = await geminiService.generateJson(prompt, schema);
+
+                if (result.success && result.data) {
+                    const { name, paid, remaining, type } = result.data;
+                    setFormData(prev => ({
+                        ...prev,
+                        name: name || prev.name,
+                        paid: paid || prev.paid,
+                        remaining: remaining || prev.remaining,
+                        type: type || prev.type
+                    }));
+                } else {
+                    setAiError('فشل التحليل، يرجى المحاولة مرة أخرى.');
+                    setTimeout(() => setAiError(''), 3000);
+                }
+
+                setAiLoading(false);
+            };
+
+            return (
+                <form onSubmit={handleSubmit}>
+                    <h3 className="text-2xl font-bold mb-4">{item ? 'تعديل معاملة' : 'إضافة معاملة جديدة'}</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormInput name="name" label="الاسم" value={formData.name} onChange={handleChange} required />
+                        <FormSelect name="type" label="نوع المعاملة" value={formData.type} onChange={handleChange}
+                            options={[
+                                "تأشيرة سياحة - شهر",
+                                "تأشيرة سياحة - 3 شهور",
+                                "تأشيرة عمل - سنة",
+                                "تأشيرة عمل - 3 سنين",
+                                "أخرى"
+                            ]} />
+                        <FormInput name="paid" label="المبلغ المقدم" type="number" value={formData.paid} onChange={handleChange} />
+                        <FormInput name="remaining" label="الباقي" type="number" value={formData.remaining} onChange={handleChange} />
+                        <FormInput name="deliveryDate" label="تاريخ الاستلام" type="date" value={formData.deliveryDate} onChange={handleChange} className="md:col-span-2" />
+
+                        <div className="md:col-span-2">
+                             <div className="flex justify-between items-center mb-1">
+                                <label htmlFor="notes" className="block text-sm font-medium text-gray-700 dark:text-gray-300">ملاحظات</label>
+                                <GeminiButton
+                                    onClick={handleAutoFill}
+                                    isLoading={aiLoading}
+                                    title="✨ ملء تلقائي"
+                                    className="text-xs px-2 py-1"
+                                />
+                            </div>
+                            <FormTextarea
+                                name="notes"
+                                value={formData.notes}
+                                onChange={handleChange}
+                                placeholder="مثال: أحمد دفع 500 والباقي 200 لتأشيرة سياحة شهر..."
+                            />
+                            {aiError && <p className="text-red-500 text-xs mt-1">{aiError}</p>}
+                        </div>
+                    </div>
+                    <div className="mt-6 flex gap-4">
+                        <button type="submit" disabled={isSaving} className="bg-green-500 text-white px-6 py-2 rounded-lg font-medium hover:bg-green-600 disabled:bg-green-300">
+                             {isSaving ? 'جاري الحفظ...' : 'حفظ'}
+                        </button>
+                        <button type="button" onClick={onClose} className="bg-gray-500 text-white px-6 py-2 rounded-lg font-medium hover:bg-gray-600">إلغاء</button>
+                    </div>
+                </form>
+            );
+        };
+
+        const DebtForm = ({ item, onSave, onClose, isSaving }) => {
+            const [formData, setFormData] = useState({
+                name: item?.name || '',
+                amount: item?.amount || 0,
+                status: item?.status || 'they-owe',
+                date: item?.date ? item.date.split('T')[0] : '',
+                notes: item?.notes || ''
+            });
+
+            const handleChange = (e) => {
+                const { name, value, type } = e.target;
+                setFormData(prev => ({
+                    ...prev,
+                    [name]: type === 'number' ? parseFloat(value) || 0 : value
+                }));
+            };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                onSave(formData);
+            };
+
+            return (
+                <form onSubmit={handleSubmit}>
+                    <h3 className="text-2xl font-bold mb-4">{item ? 'تعديل دين' : 'إضافة دين جديد'}</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <FormInput name="name" label="الاسم" value={formData.name} onChange={handleChange} required />
+                        <FormInput name="amount" label="المبلغ" type="number" value={formData.amount} onChange={handleChange} required />
+                        <FormSelect name="status" label="الحالة" value={formData.status} onChange={handleChange} className="md:col-span-2"
+                            options={[
+                                { value: 'they-owe', label: 'لي فلوس (هم مدينون لي)' },
+                                { value: 'i-owe', label: 'عليّ فلوس (أنا مدين لهم)' }
+                            ]} />
+                        <FormInput name="date" label="التاريخ" type="date" value={formData.date} onChange={handleChange} />
+                        <FormTextarea name="notes" label="ملاحظات" value={formData.notes} onChange={handleChange} className="md:col-span-2" />
+                    </div>
+                    <div className="mt-6 flex gap-4">
+                         <button type="submit" disabled={isSaving} className="bg-green-500 text-white px-6 py-2 rounded-lg font-medium hover:bg-green-600 disabled:bg-green-300">
+                             {isSaving ? 'جاري الحفظ...' : 'حفظ'}
+                        </button>
+                        <button type="button" onClick={onClose} className="bg-gray-500 text-white px-6 py-2 rounded-lg font-medium hover:bg-gray-600">إلغاء</button>
+                    </div>
+                </form>
+            );
+        };
+
+
+        // ======================================
+        //          مكونات مساعدة (Helpers)
+        // ======================================
+         // (الكود لم يتغير هنا - سليم)
+        const FormInput = ({ label, name, type = 'text', value, onChange, required = false, className = '' }) => (
+            <div className={className}>
+                <label htmlFor={name} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
+                <input
+                    type={type}
+                    id={name}
+                    name={name}
+                    value={value}
+                    onChange={onChange}
+                    required={required}
+                    className="form-input w-full p-2 border border-gray-300 rounded-lg"
+                />
+            </div>
+        );
+
+        const FormSelect = ({ label, name, value, onChange, options, className = '' }) => (
+            <div className={className}>
+                <label htmlFor={name} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
+                <select
+                    id={name}
+                    name={name}
+                    value={value}
+                    onChange={onChange}
+                    className="form-select w-full p-2 border border-gray-300 rounded-lg bg-white"
+                >
+                    {options.map(opt => (
+                        typeof opt === 'object'
+                            ? <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            : <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                </select>
+            </div>
+        );
+
+        const FormTextarea = ({ label, name, value, onChange, className = '', ...props }) => (
+            <div className={className}>
+                {label && <label htmlFor={name} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>}
+                <textarea
+                    id={name}
+                    name={name}
+                    value={value}
+                    onChange={onChange}
+                    rows="3"
+                    className="form-input w-full p-2 border border-gray-300 rounded-lg"
+                    {...props}
+                ></textarea>
+            </div>
+        );
+
+        const EditButton = ({ onClick }) => (
+            <button onClick={onClick} className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300" title="تعديل">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+            </button>
+        );
+
+        const DeleteButton = ({ onClick }) => (
+            <button onClick={onClick} className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300" title="حذف">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+            </button>
+        );
+
+        const GeminiButton = ({ onClick, isLoading, title, className = '' }) => (
+            <button
+                type="button"
+                onClick={onClick}
+                disabled={isLoading}
+                className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-white bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600 transition-all duration-300 shadow-sm ${isLoading ? 'gemini-btn-loading' : ''} ${className}`}
+                title={title}
+            >
+                {isLoading ? (
+                    <svg className="w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2.082A10.003 10.003 0 0112 22a10.003 10.003 0 01-10-10C2 6.477 6.477 2 12 2c2.21 0 4.257.744 5.918 2.082m-4.832 1.346L12 12m6 0h-5V6" />
+                    </svg>
+                ) : (
+                    <span>✨</span>
+                )}
+                <span className="hidden md:inline">{isLoading ? 'جاري...' : title.replace('✨', '').trim()}</span>
+            </button>
+        );
+
+
+        // ======================================
+        //          المكون الرئيسي (App)
+        // ======================================
+        function App() {
+            const [page, setPage] = useState(null);
+            const [user, setUser] = useState(null);
+            const [transactions, setTransactions] = useState([]);
+            const [debts, setDebts] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [dataLoading, setDataLoading] = useState(false);
+            
+            // !!! تعديل: نقل حالة الوضع الليلي إلى App !!!
+            const [isDarkMode, setIsDarkMode] = useState(document.documentElement.classList.contains('dark'));
+
+            // !!! تعديل: إضافة دالة تبديل الوضع الليلي في App !!!
+            const toggleDarkMode = () => {
+                const newMode = !isDarkMode;
+                setIsDarkMode(newMode);
+                if (newMode) {
+                    document.documentElement.classList.add('dark');
+                    localStorage.theme = 'dark';
+                } else {
+                    document.documentElement.classList.remove('dark');
+                    localStorage.theme = 'light';
+                }
+            };
+
+            const fetchData = async () => {
+                setDataLoading(true);
+                if (!authService.getToken()) {
+                    setDataLoading(false);
+                    return;
+                }
+
+                try {
+                    // استخدام fetchApi لجلب البيانات
+                    const [transData, debtsData] = await Promise.all([
+                        authService.fetchApi(`${API_URL}/api/transactions`),
+                        authService.fetchApi(`${API_URL}/api/debts`)
+                    ]);
+
+                    setTransactions(transData || []); // تعيين مصفوفة فارغة إذا كانت الاستجابة null
+                    setDebts(debtsData || []);
+
+                } catch (e) {
+                    console.error("Fetch Data Error:", e.message);
+                    // عرض خطأ للمستخدم (اختياري)
+                    authService.logout();
+                    setUser(null);
+                    setPage('login');
+                } finally {
+                    setDataLoading(false);
+                }
+            };
+
+            useEffect(() => {
+                const checkUser = async () => {
+                    const result = await authService.getMe();
+
+                    if (result.success) {
+                        setUser(result.user);
+                        setPage('dashboard');
+                        fetchData();
+                    } else {
+                        authService.logout();
+                        setUser(null);
+                        setPage('login');
+                    }
+                    setLoading(false);
+                };
+
+                checkUser();
+            }, []);
+
+
+            if (loading || page === null) {
+                return <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900 text-xl">... جاري التحميل ...</div>;
+            }
+
+            const isAuthPage = page === 'login' || page === 'register';
+
+            if (!user && !isAuthPage) {
+                return <LoginPage setPage={setPage} setUser={setUser} onLoginSuccess={fetchData} />;
+            }
+
+            if (user && isAuthPage) {
+                 setPage('dashboard');
+            }
+
+            const renderDataLoading = () => (
+                 <div className="text-center p-10 text-xl">... جاري تحميل البيانات ...</div>
+            );
+
+            const renderPage = () => {
+                if (dataLoading && page !== 'dashboard') return renderDataLoading(); // إظهار التحميل عند جلب بيانات المعاملات/الديون
+
+                switch (page) {
+                    case 'login':
+                        return <LoginPage setPage={setPage} setUser={setUser} onLoginSuccess={fetchData} />;
+                    case 'register':
+                        return <RegisterPage setPage={setPage} />;
+                    case 'dashboard':
+                        // الداشبورد لديه مؤشر تحميل خاص به
+                        // !!! تعديل: تمرير isDarkMode !!!
+                        return <DashboardPage isDarkMode={isDarkMode} />;
+                    case 'transactions':
+                        return <TransactionsPage transactions={transactions} onDataChange={fetchData} />;
+                    case 'debts':
+                        return <DebtsPage debts={debts} onDataChange={fetchData} />;
+                    default:
+                         // !!! تعديل: تمرير isDarkMode !!!
+                        return <DashboardPage isDarkMode={isDarkMode} />;
+                }
+            };
+
+            return (
+                <div dir="rtl">
+                    {/* !!! تعديل: تمرير isDarkMode و toggleDarkMode إلى Navbar !!! */}
+                    {user && <Navbar 
+                                setPage={setPage} 
+                                setUser={setUser} 
+                                user={user} 
+                                isDarkMode={isDarkMode} 
+                                onToggle={toggleDarkMode} 
+                             />}
+                    <main className="container mx-auto p-4 md:p-6">
+                        {renderPage()}
+                    </main>
+                </div>
+            );
+        }
+
+        // ======================================
+        //          بدء تشغيل React
+        // ======================================
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+
+    </script>
+</body>
+</html>
