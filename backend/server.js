@@ -22,14 +22,12 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
-  'http://localhost:5500', // For Live Server (index.html)
-  'http://127.0.0.1:5500', // For Live Server (index.html)
-  'http://localhost:5501',
-  'http://127.0.0.1:5501',
-  'https://peaceful-froyo-d7a4a4.netlify.app', // رابط Netlify
-  // أضف رابط الواجهة الأمامية الخاص بك عند النشر
+  'http://localhost:5500',
   'http://127.0.0.1:5500',
+  'https://eslamead.netlify.app', // 👈 رابط موقعك الحقيقي
+  'https://reliable-smile-production.up.railway.app', // 👈 رابط السيرفر نفسه
 ];
+
 
 app.use(cors({
   origin: function (origin, callback) {
