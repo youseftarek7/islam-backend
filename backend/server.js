@@ -2,37 +2,68 @@ const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const connectDB = require('./configdb.js');
+// --- !!! تم الإصلاح: استيراد الـ middleware بشكل صحيح ---
+// This was previously broken by a git merge conflict
 const { protect } = require('./middleware/authMiddleware');
 
 dotenv.config();
 
+// --- خطوة تشخيصية: طباعة المتغيرات ---
+console.log("=============== DEBUGGING VARIABLES ===============");
+console.log("MONGO_URI:", process.env.MONGO_URI ? "Loaded" : "Not Loaded or Invalid");
+console.log("JWT_SECRET:", process.env.JWT_SECRET ? "Loaded" : "Not Loaded");
+console.log("PORT:", process.env.PORT);
+console.log("=================================================");
+// --- نهاية الخطوة التشخيصية ---
+
 const app = express();
 
-// ✅ السماح الكامل بالموقع بتاعك + رد على OPTIONS
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', 'https://eslamead.netlify.app');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
+// Middleware
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:5500', // For Live Server (index.html)
+  'http://127.0.0.1:5500', // For Live Server (index.html)
+  'http://localhost:5501',
+  'http://127.0.0.1:5501',
+  'https://eslamead.netlify.app', // رابط Netlify
+  // أضف رابط الواجهة الأمامية الخاص بك عند النشر
+  'http://127.0.0.1:5500',
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+       console.error(`CORS blocked origin: ${origin}`);
+       callback(new Error(`المصدر ${origin} غير مسموح به بواسطة CORS`));
+    }
+  },
+  credentials: true,
+}));
 
 app.use(express.json());
 
-// ✅ المسارات
+// Routes
+// (تستخدم protect المستورد في الأعلى)
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/transactions', require('./routes/transactionRoutes'));
 app.use('/api/debts', require('./routes/debtRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
+// --- !!! إضافة جديدة: مسار العملاء !!! ---
+app.use('/api/customers', require('./routes/customerRoutes'));
+
 
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
   try {
+    console.log("[Server] Attempting to connect to DB...");
     await connectDB();
-    app.listen(PORT, () => console.log(`[Server] Running on port ${PORT}`));
+    console.log("[Server] DB Connected. Starting server...");
+    app.listen(PORT, () => console.log(`[Server] Server listening on port ${PORT}`));
+
   } catch (error) {
     console.error(`[Server] Failed to start server:`, error);
   }
