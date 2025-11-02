@@ -1,13 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
-const Customer = require('../models/Customer');
+const Customer = require('../models/CustomerModel'); // ✅ تم تصحيح المسار
 
 // --- حماية جميع المسارات ---
 router.use(protect);
 
 // --- 1. جلب جميع العملاء (للمستخدم الحالي) ---
-// GET /api/customers
 router.get('/', async (req, res) => {
   try {
     const customers = await Customer.find({ user: req.user._id });
@@ -18,7 +17,6 @@ router.get('/', async (req, res) => {
 });
 
 // --- 2. إضافة عميل جديد ---
-// POST /api/customers
 router.post('/', async (req, res) => {
   try {
     const { name, phone, email, notes } = req.body;
@@ -28,7 +26,7 @@ router.post('/', async (req, res) => {
       phone,
       email,
       notes,
-      user: req.user._id, // ربط العميل بالمستخدم
+      user: req.user._id,
     });
 
     const createdCustomer = await customer.save();
@@ -39,7 +37,6 @@ router.post('/', async (req, res) => {
 });
 
 // --- 3. تعديل عميل ---
-// PUT /api/customers/:id
 router.put('/:id', async (req, res) => {
   try {
     let customer = await Customer.findById(req.params.id);
@@ -47,7 +44,6 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ message: 'العميل غير موجود' });
     }
 
-    // التحقق من الملكية
     if (customer.user.toString() !== req.user._id.toString()) {
       return res.status(401).json({ message: 'غير مصرح لك' });
     }
@@ -65,7 +61,6 @@ router.put('/:id', async (req, res) => {
 });
 
 // --- 4. حذف عميل ---
-// DELETE /api/customers/:id
 router.delete('/:id', async (req, res) => {
   try {
     const customer = await Customer.findById(req.params.id);
@@ -73,7 +68,6 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ message: 'العميل غير موجود' });
     }
 
-    // التحقق من الملكية
     if (customer.user.toString() !== req.user._id.toString()) {
       return res.status(401).json({ message: 'غير مصرح لك' });
     }
