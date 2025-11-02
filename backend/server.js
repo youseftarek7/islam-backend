@@ -47,6 +47,10 @@ app.use('/api/debts', require('./routes/debtRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/customers', require('./routes/customerRoutes'));
 
+// --- !!! تمت الإضافة: تفعيل مسارات التقارير !!! ---
+// (بافتراض أن ملفك اسمه ReportRoutes.js وموجود بجوار باقي المسارات)
+app.use('/api/reports', require('./routes/ReportRoutes')); 
+
 // ✅ Start Server
 const PORT = process.env.PORT || 5000;
 
